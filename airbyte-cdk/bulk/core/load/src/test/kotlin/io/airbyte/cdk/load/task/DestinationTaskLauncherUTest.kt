@@ -9,12 +9,19 @@ import io.airbyte.cdk.load.command.DestinationConfiguration
 import io.airbyte.cdk.load.command.DestinationStream
 import io.airbyte.cdk.load.message.Batch
 import io.airbyte.cdk.load.message.BatchEnvelope
+import io.airbyte.cdk.load.message.ChannelMessageQueue
 import io.airbyte.cdk.load.message.CheckpointMessageWrapped
+import io.airbyte.cdk.load.message.DestinationRecordAirbyteValue
 import io.airbyte.cdk.load.message.DestinationStreamEvent
 import io.airbyte.cdk.load.message.MessageQueue
 import io.airbyte.cdk.load.message.MessageQueueSupplier
+import io.airbyte.cdk.load.message.PartitionedQueue
+import io.airbyte.cdk.load.message.PipelineEvent
 import io.airbyte.cdk.load.message.QueueWriter
 import io.airbyte.cdk.load.message.SimpleBatch
+import io.airbyte.cdk.load.message.StreamKey
+import io.airbyte.cdk.load.pipeline.BatchUpdate
+import io.airbyte.cdk.load.pipeline.InputPartitioner
 import io.airbyte.cdk.load.state.Reserved
 import io.airbyte.cdk.load.state.StreamManager
 import io.airbyte.cdk.load.state.SyncManager
@@ -29,12 +36,13 @@ import io.airbyte.cdk.load.task.implementor.ProcessFileTaskFactory
 import io.airbyte.cdk.load.task.implementor.ProcessRecordsTaskFactory
 import io.airbyte.cdk.load.task.implementor.SetupTaskFactory
 import io.airbyte.cdk.load.task.implementor.TeardownTaskFactory
+import io.airbyte.cdk.load.task.internal.DefaultInputConsumerTaskFactory
 import io.airbyte.cdk.load.task.internal.FlushCheckpointsTaskFactory
 import io.airbyte.cdk.load.task.internal.FlushTickTask
-import io.airbyte.cdk.load.task.internal.InputConsumerTaskFactory
 import io.airbyte.cdk.load.task.internal.ReservingDeserializingInputFlow
 import io.airbyte.cdk.load.task.internal.SpillToDiskTask
 import io.airbyte.cdk.load.task.internal.SpillToDiskTaskFactory
+import io.airbyte.cdk.load.task.internal.UpdateBatchStateTaskFactory
 import io.airbyte.cdk.load.task.internal.UpdateCheckpointsTask
 import io.mockk.Called
 import io.mockk.coEvery
@@ -52,7 +60,7 @@ class DestinationTaskLauncherUTest {
     private val syncManager: SyncManager = mockk(relaxed = true)
 
     // Internal Tasks
-    private val inputConsumerTaskFactory: InputConsumerTaskFactory = mockk(relaxed = true)
+    private val inputConsumerTaskFactory: DefaultInputConsumerTaskFactory = mockk(relaxed = true)
     private val spillToDiskTaskFactory: SpillToDiskTaskFactory = mockk(relaxed = true)
     private val flushTickTask: FlushTickTask = mockk(relaxed = true)
 
@@ -84,9 +92,16 @@ class DestinationTaskLauncherUTest {
     private val fileTransferQueue: MessageQueue<FileTransferQueueMessage> = mockk(relaxed = true)
     private val openStreamQueue: MessageQueue<DestinationStream> = mockk(relaxed = true)
 
+    private val recordQueueForPipeline:
+        PartitionedQueue<PipelineEvent<StreamKey, DestinationRecordAirbyteValue>> =
+        mockk(relaxed = true)
+    private val batchUpdateQueue: ChannelMessageQueue<BatchUpdate> = mockk(relaxed = true)
+    private val partitioner: InputPartitioner = mockk(relaxed = true)
+    private val updateBatchTaskFactory: UpdateBatchStateTaskFactory = mockk(relaxed = true)
+
     private fun getDefaultDestinationTaskLauncher(
         useFileTranfer: Boolean
-    ): DefaultDestinationTaskLauncher {
+    ): DefaultDestinationTaskLauncher<Nothing> {
         return DefaultDestinationTaskLauncher(
             taskScopeProvider,
             catalog,
@@ -112,6 +127,13 @@ class DestinationTaskLauncherUTest {
             checkpointQueue,
             fileTransferQueue,
             openStreamQueue,
+
+            // New interface shim
+            recordQueueForPipeline,
+            batchUpdateQueue,
+            null,
+            partitioner,
+            updateBatchTaskFactory
         )
     }
 

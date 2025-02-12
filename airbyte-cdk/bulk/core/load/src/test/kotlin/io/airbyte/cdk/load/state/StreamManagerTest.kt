@@ -5,6 +5,7 @@
 package io.airbyte.cdk.load.state
 
 import com.google.common.collect.Range
+import com.google.common.collect.TreeRangeSet
 import io.airbyte.cdk.load.command.DestinationStream
 import io.airbyte.cdk.load.command.MockDestinationCatalogFactory.Companion.stream1
 import io.airbyte.cdk.load.command.MockDestinationCatalogFactory.Companion.stream2
@@ -488,17 +489,6 @@ class StreamManagerTest {
         Assertions.assertFalse(manager.areRecordsPersistedUntilCheckpoint(checkpointId))
         manager.incrementPersistedCount(checkpointId, 5)
         Assertions.assertTrue(manager.areRecordsPersistedUntilCheckpoint(checkpointId))
-
-        // Should throw if we try to persist more than the total count
-        assertThrows<IllegalStateException> { manager.incrementPersistedCount(checkpointId, 1) }
-    }
-
-    @Test
-    fun `test persisting un unmarked checkpoint throws`() {
-        val manager = DefaultStreamManager(stream1)
-        val checkpointId = manager.getNextCheckpointId()
-
-        assertThrows<IllegalStateException> { manager.incrementPersistedCount(checkpointId, 1) }
     }
 
     @Test
@@ -536,6 +526,7 @@ class StreamManagerTest {
 
         val checkpointId2 = manager.getNextCheckpointId()
         repeat(15) { manager.incrementReadCount() }
+
         manager.markCheckpoint()
 
         Assertions.assertFalse(manager.areRecordsPersistedUntilCheckpoint(checkpointId1))
@@ -569,9 +560,6 @@ class StreamManagerTest {
         // Can still count persisted (but without effect)
         manager.incrementPersistedCount(checkpointId1, 10)
         Assertions.assertTrue(manager.areRecordsPersistedUntilCheckpoint(checkpointId1))
-
-        // Completed should also throw if we try to complete more than the total count
-        assertThrows<IllegalStateException> { manager.incrementCompletedCount(checkpointId1, 1) }
     }
 
     @Test
@@ -617,5 +605,11 @@ class StreamManagerTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `empty rangset does not enclose`() {
+        val empty = TreeRangeSet.create(listOf<Range<Long>>())
+        println(empty.encloses(Range.closedOpen(0, 2)))
     }
 }

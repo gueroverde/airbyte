@@ -14,7 +14,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micronaut.context.annotation.Secondary
 import jakarta.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
@@ -145,7 +144,8 @@ class DefaultStreamManager(
         val recordsCompleted: AtomicLong = AtomicLong(0L),
     )
     private val lastCheckpointRecordIndex = AtomicLong(0L)
-    private val checkpointCounts: ConcurrentLinkedQueue<CheckpointCounts> = ConcurrentLinkedQueue()
+    private val checkpointCounts: ConcurrentHashMap<CheckpointId, CheckpointCounts> =
+        ConcurrentHashMap()
 
     init {
         Batch.State.entries.forEach { rangesState[it] = TreeRangeSet.create() }
@@ -183,7 +183,11 @@ class DefaultStreamManager(
     override fun markCheckpoint(): Pair<Long, Long> {
         val recordIndex = recordCount.get()
         val count = recordIndex - lastCheckpointRecordIndex.getAndSet(recordIndex)
-        checkpointCounts.add(CheckpointCounts(count))
+        val nextId = checkpointCounts.keys().toList().maxOfOrNull { it.id + 1 } ?: 0
+        checkpointCounts
+            .putIfAbsent(CheckpointId(nextId), CheckpointCounts(recordsRead = count))
+            ?.let { previous -> throw IllegalStateException("Checkpoint $previous already exists") }
+
         return Pair(recordIndex, count)
     }
 
@@ -337,34 +341,27 @@ class DefaultStreamManager(
     }
 
     override fun incrementPersistedCount(checkpointId: CheckpointId, count: Long) {
-        checkpointCounts.elementAtOrNull(checkpointId.id)?.let {
-            val result = it.recordsPersisted.addAndGet(count)
-            if (result > it.recordsRead) {
-                throw IllegalStateException(
-                    "Persisted count $result for $checkpointId exceeds read count ${it.recordsRead}"
-                )
-            }
-        }
-            ?: throw IllegalStateException("No checkpoint found for $checkpointId")
+        checkpointCounts
+            .getOrPut(checkpointId) { CheckpointCounts() }
+            .recordsPersisted
+            .addAndGet(count)
     }
 
     override fun incrementCompletedCount(checkpointId: CheckpointId, count: Long) {
-        checkpointCounts.elementAtOrNull(checkpointId.id)?.let {
-            val result = it.recordsCompleted.addAndGet(count)
-            if (result > it.recordsRead) {
-                throw IllegalStateException(
-                    "Completed count $result for $checkpointId exceeds read count ${it.recordsRead}"
-                )
-            }
-        }
-            ?: throw IllegalStateException("No checkpoint found for $checkpointId")
+        checkpointCounts
+            .getOrPut(checkpointId) { CheckpointCounts() }
+            .recordsCompleted
+            .addAndGet(count)
     }
 
     override fun areRecordsPersistedUntilCheckpoint(checkpointId: CheckpointId): Boolean {
+        val counts = checkpointCounts.filter { it.key.id <= checkpointId.id }
+        if (counts.size < checkpointId.id + 1) {
+            return false
+        }
+
         val (readCount, persistedCount, completedCount) =
-            checkpointCounts.take(checkpointId.id + 1).fold(Triple(0L, 0L, 0L)) {
-                acc,
-                checkpointCount ->
+            counts.toList().fold(Triple(0L, 0L, 0L)) { acc, (_, checkpointCount) ->
                 Triple(
                     acc.first + checkpointCount.recordsRead,
                     acc.second + checkpointCount.recordsPersisted.get(),
@@ -388,7 +385,7 @@ class DefaultStreamManager(
             return true
         }
 
-        val completedCount = checkpointCounts.sumOf { it.recordsCompleted.get() }
+        val completedCount = checkpointCounts.values.sumOf { it.recordsCompleted.get() }
         return completedCount == readCount
     }
 }

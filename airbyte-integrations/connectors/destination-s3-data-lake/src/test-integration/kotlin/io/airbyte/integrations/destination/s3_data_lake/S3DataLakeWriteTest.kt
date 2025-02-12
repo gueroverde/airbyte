@@ -63,6 +63,26 @@ class GlueWriteTest :
         GlueTableIdGenerator(null),
     ) {
     @Test
+    override fun testBasicWrite() {
+        super.testBasicWrite()
+    }
+
+    @Test
+    override fun testAppend() {
+        super.testAppend()
+    }
+
+    @Test
+    override fun testInterruptedTruncateWithoutPriorData() {
+        super.testInterruptedTruncateWithoutPriorData()
+    }
+
+    @Test
+    override fun testInterruptedTruncateWithPriorData() {
+        super.testInterruptedTruncateWithPriorData()
+    }
+
+    @Test
     fun testNameConflicts() {
         assumeTrue(verifyDataWriting)
         fun makeStream(
